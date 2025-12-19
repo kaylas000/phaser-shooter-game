@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phaser Shooter Game</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #1a1a1a;
+            font-family: Arial, sans-serif;
+        }
+        #game-container {
+            border: 3px solid #00ff00;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container"></div>
+
+    <script>
+        // ==================== КОНФИГ ====================
+        const config = {
+            type: Phaser.AUTO,
+            parent: 'game-container',
+            width: 800,
+            height: 600,
+            physics: {
+                default: 'arcade',
+                arcade: {
+                    gravity: { y: 0 },
+                    debug: false
+                }
+            },
+            scene: GameScene
+        };
+
+        const game = new Phaser.Game(config);
+
+        // ==================== MAIN SCENE ====================
+        class GameScene extends Phaser.Scene {
+            constructor() {
+                super({ key: 'GameScene' });
+            }
+
+            create() {
+                // === ИНИЦИАЛИЗАЦИЯ ===
+                this.playerHealth = 100;
+                this.score = 0;
+                this.wave = 1;
+                this.enemyCount = 0;
+                this.gameActive = true;
+
+                // === СОЗДАНИЕ ИГРОКА ===
+                this.player = this.add.graphics();
+                this.player.fillStyle(0x00ff00, 1);
+                this.player.fillRect(-10, -10, 20, 20);
+                this.player.x = 400;
+                this.player.y = 300;
+                this.physics.world.enable(this.player);
+                this.player.body.setCollideWorldBounds(true);
+                this.player.body.setBounce(0.2);
+
+                // === ГРУППЫ ===
+                this.enemies = this.physics.add.group();
+                this.bullets = this.physics.add.group();
+
+                // === KEYBOARD INPUT ===
+                this.keys = this.input.keyboard.addKeys({
+                    W: Phaser.Input.Keyboard.KeyCodes.W,
+                    A: Phaser.Input.Keyboard.KeyCodes.A,
+                    S: Phaser.Input.Keyboard.KeyCodes.S,
+                    D: Phaser.Input.Keyboard.KeyCodes.D
+                });
+
+                // === MOUSE INPUT ===
+                this.input.on('pointerdown', this.shootBullet, this);
+                this.input.on('pointermove', (pointer) => {
+                    this.mouseX = pointer.x;
+                    this.mouseY = pointer.y;
+                });
+
+                // === КОЛЛИЗИИ ===
+                this.physics.add.overlap(this.bullets, this.enemies, this.bulletHitEnemy, null, this);
+                this.physics.add.overlap(this.player, this.enemies, this.enemyHitPlayer, null, this);
+
+                // === UI ===
+                this.healthText = this.add.text(10, 10, `HP: ${this.playerHealth}`, {
+                    fontSize: '20px',
+                    fill: '#00ff00',
+                    fontFamily: 'monospace'
+                });
+                this.scoreText = this.add.text(10, 40, `SCORE: ${this.score}`, {
+                    fontSize: '20px',
+                    fill: '#00ff00',
+                    fontFamily: 'monospace'
+                });
+                this.waveText = this.add.text(10, 70, `WAVE: ${this.wave}`, {
+                    fontSize: '20px',
+                    fill: '#00ff00',
+                    fontFamily: 'monospace'
+                });
+
+                // === СПАУН ВРАГОВ ===
+                this.spawnEnemies(3);
+            }
+
+            update() {
+                if (!this.gameActive) return;
+
+                // === ДВИЖЕНИЕ ИГРОКА ===
+                const speed = 200;
+                this.player.body.setVelocity(0, 0);
+
+                if (this.keys.W.isDown) this.player.body.setVelocityY(-speed);
+                if (this.keys.S.isDown) this.player.body.setVelocityY(speed);
+                if (this.keys.A.isDown) this.player.body.setVelocityX(-speed);
+                if (this.keys.D.isDown) this.player.body.setVelocityX(speed);
+
+                // === ПОВОРОТ ИГРОКА НА МЫШЬ ===
+                const angle = Phaser.Math.Angle.Between(
+                    this.player.x,
+                    this.player.y,
+                    this.mouseX || this.input.activePointer.x,
+                    this.mouseY || this.input.activePointer.y
+                );
+                this.player.rotation = angle;
+
+                // === ВРАГИ ХОДЯТ НА ИГРОКА ===
+                this.enemies.children.entries.forEach((enemy) => {
+                    const distance = Phaser.Math.Distance.Between(
+                        enemy.x, enemy.y,
+                        this.player.x, this.player.y
+                    );
+
+                    if (distance > 0) {
+                        const vx = ((this.player.x - enemy.x) / distance) * 150;
+                        const vy = ((this.player.y - enemy.y) / distance) * 150;
+                        enemy.body.setVelocity(vx, vy);
+
+                        // Враг поворачивается на игрока
+                        enemy.rotation = Phaser.Math.Angle.Between(
+                            enemy.x, enemy.y,
+                            this.player.x, this.player.y
+                        );
+                    }
+                });
+
+                // === УДАЛИТЬ ПУЛИ ЗА ГРАНИЦЕЙ ===
+                this.bullets.children.entries.forEach((bullet) => {
+                    if (bullet.x < 0 || bullet.x > 800 || bullet.y < 0 || bullet.y > 600) {
+                        bullet.destroy();
+                    }
+                });
+
+                // === ОБНОВИТЬ UI ===
+                this.healthText.setText(`HP: ${this.playerHealth}`);
+                this.scoreText.setText(`SCORE: ${this.score}`);
+                this.waveText.setText(`WAVE: ${this.wave}`);
+            }
+
+            shootBullet() {
+                if (!this.gameActive) return;
+
+                const bullet = this.add.graphics();
+                bullet.fillStyle(0xffff00, 1);
+                bullet.fillRect(-3, -3, 6, 6);
+                bullet.x = this.player.x;
+                bullet.y = this.player.y;
+
+                this.physics.world.enable(bullet);
+
+                const angle = Phaser.Math.Angle.Between(
+                    this.player.x,
+                    this.player.y,
+                    this.mouseX || this.input.activePointer.x,
+                    this.mouseY || this.input.activePointer.y
+                );
+
+                const speed = 600;
+                bullet.body.setVelocity(
+                    Math.cos(angle) * speed,
+                    Math.sin(angle) * speed
+                );
+
+                this.bullets.add(bullet);
+            }
+
+            spawnEnemies(count) {
+                for (let i = 0; i < count; i++) {
+                    const angle = (i / count) * Math.PI * 2;
+                    const distance = 200;
+                    const x = this.player.x + Math.cos(angle) * distance;
+                    const y = this.player.y + Math.sin(angle) * distance;
+
+                    const enemy = this.add.graphics();
+                    enemy.fillStyle(0xff0000, 1);
+                    enemy.fillRect(-10, -10, 20, 20);
+                    enemy.x = x;
+                    enemy.y = y;
+                    enemy.health = 20;
+
+                    this.physics.world.enable(enemy);
+                    enemy.body.setCollideWorldBounds(true);
+                    enemy.body.setBounce(0.8);
+
+                    this.enemies.add(enemy);
+                    this.enemyCount++;
+                }
+            }
+
+            bulletHitEnemy(bullet, enemy) {
+                bullet.destroy();
+                enemy.health -= 20;
+
+                if (enemy.health <= 0) {
+                    enemy.destroy();
+                    this.enemyCount--;
+                    this.score += 100;
+
+                    // Волна если все враги мертвы
+                    if (this.enemyCount === 0) {
+                        this.wave++;
+                        this.spawnEnemies(3 + Math.floor(this.wave / 2)); // Усложнение
+                    }
+                }
+            }
+
+            enemyHitPlayer(player, enemy) {
+                this.playerHealth -= 10;
+
+                if (this.playerHealth <= 0) {
+                    this.gameOver();
+                }
+            }
+
+            gameOver() {
+                this.gameActive = false;
+                this.physics.pause();
+
+                const gameOverText = this.add.text(400, 300, 'GAME OVER', {
+                    fontSize: '60px',
+                    fill: '#ff0000',
+                    fontFamily: 'monospace'
+                }).setOrigin(0.5);
+
+                const scoreText = this.add.text(400, 380, `FINAL SCORE: ${this.score}`, {
+                    fontSize: '30px',
+                    fill: '#ffff00',
+                    fontFamily: 'monospace'
+                }).setOrigin(0.5);
+
+                const restartText = this.add.text(400, 450, 'Refresh page to restart', {
+                    fontSize: '20px',
+                    fill: '#00ff00',
+                    fontFamily: 'monospace'
+                }).setOrigin(0.5);
+            }
+        }
+    </script>
+</body>
+</html>
